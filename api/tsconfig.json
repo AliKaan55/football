@@ -9,6 +9,7 @@
     "isolatedModules": true,
     "types": ["node"],
     "strict": false,
-    "noEmit": true
+    "noEmit": false,
+    "outDir": "./dist"
   }
 }
