@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="128" fill="#0F172A"/>
+  <circle cx="256" cy="256" r="190" fill="#10B981" fill-opacity="0.15" stroke="#10B981" stroke-width="8"/>
+  <circle cx="256" cy="256" r="140" fill="#1E293B" stroke="#38BDF8" stroke-width="6"/>
+  <!-- Football icon -->
+  <polygon points="256,170 290,195 277,235 235,235 222,195" fill="#38BDF8" />
+  <polygon points="256,342 222,317 235,277 277,277 290,317" fill="#10B981" />
+  <circle cx="256" cy="256" r="12" fill="#FFFFFF"/>
+  <path d="M256 120 L256 170 M256 342 L256 392" stroke="#94A3B8" stroke-width="4" stroke-linecap="round"/>
+  <!-- Checkmark badge -->
+  <circle cx="370" cy="370" r="60" fill="#10B981" stroke="#0F172A" stroke-width="8"/>
+  <path d="M346 370 L364 388 L396 354" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
