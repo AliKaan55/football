@@ -1,8 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // =============================================================================
 // LOCAL FOOTBALLER VERIFICATION — powered by the Transfermarkt dataset
@@ -17,7 +14,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // risk.
 // =============================================================================
 
-const DATA_PATH = path.join(__dirname, '..', '..', 'data', 'players-dataset.json');
+// NOTE: deliberately resolved from process.cwd() (the project/task root),
+// not __dirname/import.meta.url. Vercel bundles this module together with
+// api/verify-footballer.ts into a single file, which changes the file's own
+// on-disk location at runtime — __dirname-based paths silently point to the
+// wrong place after bundling. process.cwd() is the project root in both
+// local dev (`tsx server.ts`) and the deployed Vercel function, so it's the
+// reliable choice here.
+const DATA_PATH = path.join(process.cwd(), 'data', 'players-dataset.json');
 
 interface PlayerRecord {
   i: number; // player_id
