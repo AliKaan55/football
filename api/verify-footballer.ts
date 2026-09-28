@@ -1,5 +1,4 @@
-import { verifyFootballer, type TeamRef } from './_lib/verify';
-
+import { verifyFootballer, type TeamRef } from './_lib/verify.js';
 // Vercel Node.js Serverless Function. Deployed at /api/verify-footballer.
 // Mirrors the local dev endpoint defined in server.ts (both share the same
 // verification logic from ./_lib/verify).
