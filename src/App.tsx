@@ -14,6 +14,14 @@ import { TeamCatalogModal } from './components/TeamCatalogModal';
 import { AdminPanelModal } from './components/AdminPanelModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { GameSetup } from './components/GameSetup';
+import {
+  AdminAuthError,
+  clearAdminPassword,
+  fetchServerTeams,
+  getAdminPassword,
+  loginAdmin,
+  saveServerTeams,
+} from './utils/adminApi';
 
 const STORAGE_KEY_TEAMS = 'football_teams_list_v2';
 const STORAGE_KEY_SLOTS_MAP = 'football_drawn_slots_map_v2';
@@ -94,6 +102,27 @@ export default function App() {
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [adminEditingTeam, setAdminEditingTeam] = useState<Team | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastIsError, setToastIsError] = useState(false);
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => !!getAdminPassword());
+
+  // Sunucudaki (veritabanındaki) takım listesi tek doğru kaynaktır; yerel kayıt sadece önbellek.
+  useEffect(() => {
+    let cancelled = false;
+    fetchServerTeams().then((serverTeams) => {
+      if (cancelled || !serverTeams) return;
+      setTeams(serverTeams);
+      setSlotsMap((prev) => {
+        const next = { ...prev };
+        ([2, 3, 4, 5] as DrawMode[]).forEach((mode) => {
+          next[mode] = next[mode].map((t) => (t ? serverTeams.find((s) => s.id === t.id) || null : null));
+        });
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Sync teams to localStorage
   useEffect(() => {
@@ -119,11 +148,36 @@ export default function App() {
     }
   }, [slotsMap]);
 
-  const showToast = (msg: string) => {
+  const showToast = (msg: string, isError = false) => {
     setToastMessage(msg);
+    setToastIsError(isError);
     setTimeout(() => {
       setToastMessage(null);
-    }, 3200);
+    }, isError ? 5000 : 3200);
+  };
+
+  // Takım listesini veritabanına kaydeder (yalnızca admin).
+  const persistTeams = async (next: Team[]) => {
+    try {
+      await saveServerTeams(next);
+    } catch (err: any) {
+      if (err instanceof AdminAuthError) {
+        clearAdminPassword();
+        setIsAdmin(false);
+      }
+      showToast(`⚠ Sunucuya kaydedilemedi: ${err?.message || 'bilinmeyen hata'}`, true);
+    }
+  };
+
+  const handleAdminLogin = async (password: string): Promise<string | null> => {
+    const err = await loginAdmin(password);
+    if (!err) setIsAdmin(true);
+    return err;
+  };
+
+  const handleAdminLogout = () => {
+    clearAdminPassword();
+    setIsAdmin(false);
   };
 
   // Handle slot teams drawn from "Karıştır"
@@ -137,15 +191,17 @@ export default function App() {
 
   // Admin: Add Team
   const handleAddTeam = (newTeam: Team) => {
-    setTeams((prev) => [newTeam, ...prev]);
+    const next = [newTeam, ...teams];
+    setTeams(next);
+    persistTeams(next);
     showToast(`✓ "${newTeam.name}" kulübü başarıyla eklendi!`);
   };
 
   // Admin: Update Team
   const handleUpdateTeam = (updatedTeam: Team) => {
-    setTeams((prev) =>
-      prev.map((t) => (t.id === updatedTeam.id ? updatedTeam : t))
-    );
+    const nextTeams = teams.map((t) => (t.id === updatedTeam.id ? updatedTeam : t));
+    setTeams(nextTeams);
+    persistTeams(nextTeams);
     setSlotsMap((prev) => {
       const nextMap = { ...prev };
       ([2, 3, 4, 5] as DrawMode[]).forEach((mode) => {
@@ -159,7 +215,9 @@ export default function App() {
   // Admin: Delete Team
   const handleDeleteTeam = (teamId: string) => {
     const target = teams.find((t) => t.id === teamId);
-    setTeams((prev) => prev.filter((t) => t.id !== teamId));
+    const nextTeams = teams.filter((t) => t.id !== teamId);
+    setTeams(nextTeams);
+    persistTeams(nextTeams);
     setSlotsMap((prev) => {
       const nextMap = { ...prev };
       ([2, 3, 4, 5] as DrawMode[]).forEach((mode) => {
@@ -173,6 +231,7 @@ export default function App() {
   // Admin: Reset to default 40 teams
   const handleResetDefaults = () => {
     setTeams(DEFAULT_TEAMS);
+    persistTeams(DEFAULT_TEAMS);
     showToast('Varsayılan 40 kulüp listesi geri yüklendi');
   };
 
@@ -203,7 +262,7 @@ export default function App() {
         {/* Toast Alert */}
         {toastMessage && (
           <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-none">
-            <div className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-emerald-500/95 backdrop-blur-md text-white font-bold text-xs sm:text-sm shadow-2xl shadow-emerald-500/40 border border-emerald-400">
+            <div className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl backdrop-blur-md text-white font-bold text-xs sm:text-sm shadow-2xl border ${toastIsError ? 'bg-rose-600/95 shadow-rose-500/40 border-rose-400' : 'bg-emerald-500/95 shadow-emerald-500/40 border-emerald-400'}`}>
               <Sparkles className="w-4 h-4 shrink-0" />
               <span>{toastMessage}</span>
             </div>
@@ -254,6 +313,9 @@ export default function App() {
         onDeleteTeam={handleDeleteTeam}
         onResetDefaults={handleResetDefaults}
         initialEditingTeam={adminEditingTeam}
+        isAdmin={isAdmin}
+        onLogin={handleAdminLogin}
+        onLogout={handleAdminLogout}
       />
 
       {/* Mobile Nav */}
