@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { verifyFootballer, type TeamRef } from './api/_lib/verify';
+import { verifyFootballer, type TeamRef } from './api/_lib/verify.js';
 
 // =============================================================================
 // Local dev server. The /api/verify-footballer route below mirrors the
