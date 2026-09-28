@@ -1,7 +1,10 @@
 import 'dotenv/config';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { verifyFootballer, type TeamRef } from './api/_lib/verify.js';
+import verifyHandler from './api/verify-footballer.js';
+import authHandler from './api/auth.js';
+import teamsHandler from './api/teams.js';
+import playersHandler from './api/players.js';
 
 // =============================================================================
 // Local dev server. The /api/verify-footballer route below mirrors the
@@ -14,41 +17,11 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  // API endpoint for footballer verification against selected teams — fully
-  // local & synchronous now, so no loading/rate-limit/quota states needed.
-  app.post('/api/verify-footballer', (req, res) => {
-    try {
-      const { footballerName, selectedTeams } = req.body;
-      if (!footballerName || !selectedTeams || !Array.isArray(selectedTeams) || selectedTeams.length === 0) {
-        return res.status(400).json({
-          is_error: false,
-          is_correct: false,
-          identified_player: footballerName || '',
-          matched_teams: [],
-          missing_teams: [],
-          message: 'Lütfen geçerli bir futbolcu adı ve en az 1 takım seçin.',
-        });
-      }
-
-      const teams: TeamRef[] = selectedTeams.map((t: any) => ({
-        id: String(t?.id ?? ''),
-        name: String(t?.name ?? t?.id ?? t ?? ''),
-      }));
-
-      const result = verifyFootballer(String(footballerName), teams);
-      return res.json({ is_error: false, ...result });
-    } catch (err: any) {
-      console.error('Doğrulama hatası:', err);
-      return res.status(200).json({
-        is_error: false,
-        is_correct: false,
-        identified_player: req.body?.footballerName || '',
-        matched_teams: [],
-        missing_teams: [],
-        message: 'Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.',
-      });
-    }
-  });
+  // Üretimdeki Vercel fonksiyonlarının (api/*.ts) birebir aynıları burada da çalışır.
+  app.all('/api/verify-footballer', (req, res) => verifyHandler(req, res));
+  app.all('/api/auth', (req, res) => authHandler(req, res));
+  app.all('/api/teams', (req, res) => teamsHandler(req, res));
+  app.all('/api/players', (req, res) => playersHandler(req, res));
 
   // Vite middleware for development
   const vite = await createViteServer({

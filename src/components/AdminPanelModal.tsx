@@ -13,12 +13,15 @@ import {
   Image as ImageIcon,
   ExternalLink,
   Globe,
+  LogOut,
+  Lock,
 } from 'lucide-react';
 import { Team, LeagueId } from '../types';
 import { LEAGUES } from '../data/teams';
 import { TeamBadge } from './TeamBadge';
 import { soundEngine } from '../utils/audio';
 import { generateBadgeDataUrl } from '../utils/svgLogoGenerator';
+import { PlayerAdminTab } from './PlayerAdminTab';
 
 interface AdminPanelModalProps {
   isOpen: boolean;
@@ -29,6 +32,9 @@ interface AdminPanelModalProps {
   onDeleteTeam: (teamId: string) => void;
   onResetDefaults: () => void;
   initialEditingTeam?: Team | null;
+  isAdmin: boolean;
+  onLogin: (password: string) => Promise<string | null>;
+  onLogout: () => void;
 }
 
 export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
@@ -40,7 +46,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   onDeleteTeam,
   onResetDefaults,
   initialEditingTeam,
+  isAdmin,
+  onLogin,
+  onLogout,
 }) => {
+  const [tab, setTab] = useState<'teams' | 'players'>('teams');
+  const [loginPw, setLoginPw] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginBusy, setLoginBusy] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLeagueFilter, setSelectedLeagueFilter] = useState<LeagueId | 'all'>('all');
   
@@ -89,6 +102,50 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   }, [initialEditingTeam, isOpen]);
 
   if (!isOpen) return null;
+
+  // Yönetici girişi: şifre sunucuda doğrulanır (ADMIN_PASSWORD).
+  if (!isAdmin) {
+    const submitLogin = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setLoginBusy(true);
+      setLoginError(null);
+      const err = await onLogin(loginPw);
+      setLoginBusy(false);
+      if (err) setLoginError(err);
+      else setLoginPw('');
+    };
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
+        <form onSubmit={submitLogin} className="w-full max-w-sm rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl p-6 text-slate-100 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-black text-lg">
+              <Lock className="w-5 h-5 text-emerald-400" /> Yönetici Girişi
+            </div>
+            <button type="button" onClick={onClose} className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <p className="text-xs text-slate-400">Kulüp ve oyuncu veritabanını düzenlemek için yönetici şifresini girin.</p>
+          <input
+            type="password"
+            autoFocus
+            value={loginPw}
+            onChange={(e) => setLoginPw(e.target.value)}
+            placeholder="Yönetici şifresi"
+            className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700/80 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+          />
+          {loginError && <div className="text-xs text-rose-300 bg-rose-950/60 border border-rose-700/60 rounded-xl px-3 py-2">{loginError}</div>}
+          <button
+            type="submit"
+            disabled={loginBusy || !loginPw}
+            className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 font-bold text-sm cursor-pointer"
+          >
+            {loginBusy ? 'Kontrol ediliyor...' : 'Giriş Yap'}
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -177,20 +234,48 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 Kulüp Yönetim Paneli (Admin)
               </h3>
               <p className="text-xs text-slate-400">
-                Kulüp ekleme, silme, güncelleme ve logo bağlantılarını yönetin
+                Kulüpleri ve oyuncu veritabanını yönetin
               </p>
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={onLogout}
+              className="flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              title="Yönetici oturumunu kapat"
+            >
+              <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Çıkış</span>
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Sekmeler */}
+        <div className="flex gap-2 pt-3 shrink-0">
+          {([['teams', 'Kulüpler'], ['players', 'Oyuncu Veritabanı']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition cursor-pointer ${
+                tab === id ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         {/* Modal Main Body (2 Columns on large screens: Form + List) */}
+        {tab === 'players' ? (
+          <PlayerAdminTab teams={teams} onAuthError={onLogout} />
+        ) : (
         <div className="flex-1 overflow-y-auto pt-4 grid grid-cols-1 lg:grid-cols-12 gap-6 pr-1">
           {/* LEFT COLUMN: Add / Update Team Form */}
           <div className="lg:col-span-5 bg-slate-950/70 border border-slate-800/80 rounded-2xl p-4 sm:p-5 flex flex-col justify-between">
@@ -532,10 +617,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             </div>
           </div>
         </div>
+        )}
 
         {/* Modal Footer */}
         <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400 shrink-0">
-          <span>Tüm kulüp ekleme, silme ve güncellemeler otomatik olarak tarayıcıya (localStorage) kaydedilir.</span>
+          <span>Tüm değişiklikler veritabanına kaydedilir ve tüm cihazlarda geçerli olur.</span>
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs transition cursor-pointer"

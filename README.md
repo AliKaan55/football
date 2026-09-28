@@ -28,3 +28,23 @@ projesinin `.duckdb` dosyasından `data/players-dataset.json` dosyasını yenide
 pip install duckdb
 python scripts/build-players-dataset.py /path/to/transfermarkt-datasets.duckdb
 ```
+
+## Admin paneli (site içinden kulüp ve oyuncu yönetimi)
+
+Header'daki ⚙️ butonundan açılır; şifre sunucuda doğrulanır.
+
+- **Kulüpler** sekmesi: kulüp ekle / düzenle / sil. Liste veritabanında saklanır,
+  tüm cihazlarda aynıdır.
+- **Oyuncu Veritabanı** sekmesi: oyuncu ara, kulüp ekle/çıkar, yeni oyuncu ekle,
+  düzenlemeyi geri al veya oyuncuyu sil. `data/players-dataset.json` (taban veri)
+  değişmez; yapılan değişiklikler onun üzerine uygulanır.
+
+### Vercel kurulumu (bir kez)
+
+1. Vercel projesi > **Storage** > **Upstash Redis** (Marketplace) oluştur ve projeye bağla.
+   `KV_REST_API_URL` ve `KV_REST_API_TOKEN` otomatik eklenir.
+2. **Settings > Environment Variables** > `ADMIN_PASSWORD` ekle (kendi belirlediğin şifre).
+3. Yeniden deploy et (Deployments > son deploy > Redeploy).
+
+Yerelde (`npm run dev`) Redis gerekmez; `.env` içine `ADMIN_PASSWORD=...` yazarsan
+değişiklikler `.local-store.json` dosyasına kaydedilir.

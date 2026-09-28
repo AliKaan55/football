@@ -1,8 +1,9 @@
 import { verifyFootballer, type TeamRef } from './_lib/verify.js';
+
 // Vercel Node.js Serverless Function. Deployed at /api/verify-footballer.
 // Mirrors the local dev endpoint defined in server.ts (both share the same
 // verification logic from ./_lib/verify).
-export default function handler(req: any, res: any) {
+export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     res.status(405).json({ is_error: true, message: 'Method Not Allowed' });
     return;
@@ -28,7 +29,7 @@ export default function handler(req: any, res: any) {
       name: String(t?.name ?? t?.id ?? t ?? ''),
     }));
 
-    const result = verifyFootballer(String(footballerName), teams);
+    const result = await verifyFootballer(String(footballerName), teams);
     res.status(200).json({ is_error: false, ...result });
   } catch (err: any) {
     console.error('Doğrulama hatası:', err);

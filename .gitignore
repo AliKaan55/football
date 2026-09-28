@@ -4,3 +4,4 @@ api/dist/
 .vs/
 *.log
 .vercel
+.local-store.json

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { getStore } from './store.js';
 
 // =============================================================================
 // LOCAL FOOTBALLER VERIFICATION — powered by the Transfermarkt dataset
@@ -14,14 +15,20 @@ import path from 'path';
 // risk.
 // =============================================================================
 
-// NOTE: deliberately resolved from process.cwd() (the project/task root),
-// not __dirname/import.meta.url. Vercel bundles this module together with
-// api/verify-footballer.ts into a single file, which changes the file's own
-// on-disk location at runtime — __dirname-based paths silently point to the
-// wrong place after bundling. process.cwd() is the project root in both
-// local dev (`tsx server.ts`) and the deployed Vercel function, so it's the
-// reliable choice here.
-const DATA_PATH = path.join(process.cwd(), 'data', 'players-dataset.json');
+// Dataset location: process.cwd() is the project root locally and /var/task on
+// Vercel (vercel.json `includeFiles` copies data/players-dataset.json there).
+// A few fallbacks are tried in case the bundler moves files around.
+function findDatasetPath(): string {
+  const candidates = [
+    path.join(process.cwd(), 'data', 'players-dataset.json'),
+    path.join('/var/task', 'data', 'players-dataset.json'),
+    path.join(process.cwd(), '..', 'data', 'players-dataset.json'),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  throw new Error('players-dataset.json bulunamadı. Denenen yollar: ' + candidates.join(', '));
+}
 
 interface PlayerRecord {
   i: number; // player_id
@@ -169,9 +176,13 @@ for (const [id, list] of Object.entries(DEFAULT_TEAM_ALIASES)) {
 let PLAYERS: IndexedPlayer[] = [];
 const BY_EXACT_NAME = new Map<string, IndexedPlayer[]>();
 const BY_WORD = new Map<string, IndexedPlayer[]>();
+const BASE_IDS = new Set<number>();
+
+let loaded = false;
 
 function loadPlayerDataset() {
-  const raw = fs.readFileSync(DATA_PATH, 'utf-8');
+  if (loaded) return;
+  const raw = fs.readFileSync(findDatasetPath(), 'utf-8');
   const parsed = JSON.parse(raw) as PlayerRecord[];
 
   PLAYERS = parsed.map((p) => {
@@ -181,6 +192,7 @@ function loadPlayerDataset() {
   });
 
   for (const p of PLAYERS) {
+    BASE_IDS.add(p.i);
     const exactList = BY_EXACT_NAME.get(p._norm);
     if (exactList) exactList.push(p);
     else BY_EXACT_NAME.set(p._norm, [p]);
@@ -192,13 +204,95 @@ function loadPlayerDataset() {
     }
   }
 
+  loaded = true;
   console.log(`[veritabani] ${PLAYERS.length} futbolcu ve kariyer/transfer geçmişi belleğe yüklendi.`);
 }
 
-loadPlayerDataset();
-
 function pickMostFamous(list: IndexedPlayer[]): IndexedPlayer {
   return list.reduce((best, current) => (current.v > best.v ? current : best));
+}
+
+// -----------------------------------------------------------------------------
+// Admin panelinden yapılan değişiklikler ("overlay"): taban veri setinin
+// üzerine eklenen yeni oyuncular, düzenlenen oyuncular ve silinenler.
+// Veritabanında (Redis) saklanır; burada kısa süreli bellekte önbelleğe alınır.
+// -----------------------------------------------------------------------------
+export interface PlayerOverride {
+  i: number;
+  n?: string;
+  v?: number;
+  c?: string[];
+  deleted?: boolean;
+  custom?: boolean; // true: tamamen yeni eklenmiş oyuncu, false: taban oyuncunun düzenlenmiş hali
+}
+
+export const PLAYER_OVERRIDES_KEY = 'fk:player-overrides';
+const OVERLAY_TTL_MS = 10_000;
+
+interface Overlay {
+  at: number;
+  list: IndexedPlayer[]; // silinmemiş override kayıtları
+  blocked: Set<number>; // taban veride yok sayılacak oyuncu ID'leri
+  byExact: Map<string, IndexedPlayer[]>;
+  byWord: Map<string, IndexedPlayer[]>;
+  customIds: Set<number>;
+}
+
+let overlayCache: Overlay | null = null;
+
+function indexPlayer(p: PlayerRecord): IndexedPlayer {
+  return { ...p, _norm: normalizeKey(p.n), _words: p.n.split(/\s+/).map(normalizeKey).filter(Boolean) };
+}
+
+function buildOverlay(records: PlayerOverride[]): Overlay {
+  const overlay: Overlay = {
+    at: Date.now(),
+    list: [],
+    blocked: new Set(),
+    byExact: new Map(),
+    byWord: new Map(),
+    customIds: new Set(),
+  };
+  for (const r of records) {
+    overlay.blocked.add(r.i);
+    if (r.deleted) continue;
+    if (r.custom) overlay.customIds.add(r.i);
+    const ip = indexPlayer({ i: r.i, n: r.n || '', v: r.v || 0, c: r.c || [] });
+    if (!ip._norm) continue;
+    overlay.list.push(ip);
+    const ex = overlay.byExact.get(ip._norm);
+    if (ex) ex.push(ip);
+    else overlay.byExact.set(ip._norm, [ip]);
+    for (const w of new Set(ip._words)) {
+      const wl = overlay.byWord.get(w);
+      if (wl) wl.push(ip);
+      else overlay.byWord.set(w, [ip]);
+    }
+  }
+  return overlay;
+}
+
+async function getOverlay(): Promise<Overlay> {
+  if (overlayCache && Date.now() - overlayCache.at < OVERLAY_TTL_MS) return overlayCache;
+  try {
+    const all = await getStore().hgetallJSON<PlayerOverride>(PLAYER_OVERRIDES_KEY);
+    overlayCache = buildOverlay(Object.values(all));
+  } catch (err) {
+    // Veritabanına ulaşılamazsa doğrulama taban veriyle çalışmaya devam eder.
+    console.error('Oyuncu değişiklikleri okunamadı, taban veri kullanılıyor:', err);
+    overlayCache = buildOverlay([]);
+    overlayCache.at = Date.now() - OVERLAY_TTL_MS + 2000; // 2 sn sonra tekrar dene
+  }
+  return overlayCache;
+}
+
+export function invalidateOverlay() {
+  overlayCache = null;
+}
+
+export function isBasePlayerId(id: number): boolean {
+  loadPlayerDataset();
+  return BASE_IDS.has(id);
 }
 
 // Finds the most likely player for a (possibly partial, misspelled, or
@@ -211,17 +305,23 @@ function pickMostFamous(list: IndexedPlayer[]): IndexedPlayer {
 //   2. Raw substring containment, for partial names that don't line up with
 //      word boundaries.
 //   3. Small-edit-distance fuzzy match, to tolerate typos.
-function findPlayer(query: string): IndexedPlayer | null {
+// Admin değişiklikleri (overlay) her adımda taban verinin yerine geçer.
+function findPlayer(query: string, overlay: Overlay): IndexedPlayer | null {
   const q = normalizeKey(query);
   if (!q) return null;
+  const { blocked } = overlay;
 
   const pool = new Map<number, IndexedPlayer>();
-  for (const p of BY_EXACT_NAME.get(q) || []) pool.set(p.i, p);
-  for (const p of BY_WORD.get(q) || []) pool.set(p.i, p);
+  for (const p of BY_EXACT_NAME.get(q) || []) if (!blocked.has(p.i)) pool.set(p.i, p);
+  for (const p of BY_WORD.get(q) || []) if (!blocked.has(p.i)) pool.set(p.i, p);
+  for (const p of overlay.byExact.get(q) || []) pool.set(p.i, p);
+  for (const p of overlay.byWord.get(q) || []) pool.set(p.i, p);
   if (pool.size > 0) return pickMostFamous([...pool.values()]);
 
   if (q.length >= 3) {
-    const substringMatches = PLAYERS.filter((p) => p._norm.includes(q));
+    const substringMatches = PLAYERS.filter((p) => !blocked.has(p.i) && p._norm.includes(q)).concat(
+      overlay.list.filter((p) => p._norm.includes(q))
+    );
     if (substringMatches.length > 0) return pickMostFamous(substringMatches);
   }
 
@@ -229,7 +329,7 @@ function findPlayer(query: string): IndexedPlayer | null {
     let best: IndexedPlayer | null = null;
     let bestDist = Infinity;
     const threshold = Math.min(2, Math.max(1, Math.floor(q.length * 0.3)));
-    for (const p of PLAYERS) {
+    const consider = (p: IndexedPlayer) => {
       const candidates = [p._words[p._words.length - 1], p._norm];
       for (const w of candidates) {
         if (!w || Math.abs(w.length - q.length) > 2) continue;
@@ -239,11 +339,68 @@ function findPlayer(query: string): IndexedPlayer | null {
           bestDist = dist;
         }
       }
-    }
+    };
+    for (const p of PLAYERS) if (!blocked.has(p.i)) consider(p);
+    for (const p of overlay.list) consider(p);
     return best;
   }
 
   return null;
+}
+
+export interface PlayerSearchResult {
+  i: number;
+  n: string;
+  v: number;
+  c: string[];
+  source: 'base' | 'edited' | 'custom';
+}
+
+// Admin paneli için oyuncu arama (taban veri + değişiklikler birleşik).
+export async function searchPlayers(query: string, limit = 25): Promise<PlayerSearchResult[]> {
+  loadPlayerDataset();
+  const overlay = await getOverlay();
+  const q = normalizeKey(query);
+
+  const toResult = (p: IndexedPlayer, fromOverlay: boolean): PlayerSearchResult => ({
+    i: p.i,
+    n: p.n,
+    v: p.v,
+    c: p.c || [],
+    source: fromOverlay ? (overlay.customIds.has(p.i) ? 'custom' : 'edited') : 'base',
+  });
+
+  if (!q) {
+    // Arama boşsa son eklenen/düzenlenen oyuncuları göster.
+    return overlay.list
+      .slice()
+      .sort((a, b) => b.i - a.i)
+      .slice(0, limit)
+      .map((p) => toResult(p, true));
+  }
+
+  const found = new Map<number, PlayerSearchResult>();
+  const add = (p: IndexedPlayer, fromOverlay: boolean) => {
+    if (!found.has(p.i)) found.set(p.i, toResult(p, fromOverlay));
+  };
+
+  // Önce düzenlenmiş/yeni kayıtlar, sonra taban veri.
+  for (const p of overlay.list) if (p._norm.includes(q)) add(p, true);
+  for (const p of BY_EXACT_NAME.get(q) || []) if (!overlay.blocked.has(p.i)) add(p, false);
+  for (const p of BY_WORD.get(q) || []) if (!overlay.blocked.has(p.i)) add(p, false);
+  if (found.size < limit * 4) {
+    for (const p of PLAYERS) {
+      if (found.size >= limit * 40) break;
+      if (!overlay.blocked.has(p.i) && p._norm.includes(q)) add(p, false);
+    }
+  }
+
+  return [...found.values()]
+    .sort((a, b) => {
+      const rank = (r: PlayerSearchResult) => (r.source === 'base' ? 1 : 0);
+      return rank(a) - rank(b) || b.v - a.v;
+    })
+    .slice(0, limit);
 }
 
 // Checks whether the identified player's club history includes the given
@@ -268,9 +425,11 @@ function playerHasTeam(normClubs: Set<string>, rawClubs: string[], team: TeamRef
   return false;
 }
 
-export function verifyFootballer(footballerName: string, selectedTeams: TeamRef[]): VerificationResult {
+export async function verifyFootballer(footballerName: string, selectedTeams: TeamRef[]): Promise<VerificationResult> {
+  loadPlayerDataset(); // lazy: yalnızca ilk istekte yüklenir, hata olursa yakalanır
+  const overlay = await getOverlay();
   const cleanName = footballerName.trim();
-  const player = findPlayer(cleanName);
+  const player = findPlayer(cleanName, overlay);
 
   if (!player) {
     return {

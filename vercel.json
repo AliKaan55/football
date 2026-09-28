@@ -2,6 +2,9 @@
   "functions": {
     "api/verify-footballer.ts": {
       "includeFiles": "data/players-dataset.json"
+    },
+    "api/players.ts": {
+      "includeFiles": "data/players-dataset.json"
     }
   }
 }
