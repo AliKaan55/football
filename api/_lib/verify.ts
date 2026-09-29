@@ -78,7 +78,7 @@ const GENERIC_CLUB_TOKENS = new Set([
   'fc', 'cf', 'afc', 'sc', 'ac', 'as', 'us', 'ss', 'ssc', 'ol', 'om', 'bk', 'ik', 'fk', 'sk', 'ff', 'if',
   'bc', 'cd', 'ud', 'rc', 'sd', 'club', 'calcio', 'futbol', 'fussball', 'football', 'klub', 'kulubu',
   'kulup', 'jimnastik', 'gymnastic', 'gymnastics', 'associazione', 'sportiva', 'societa', 'spa', 'plc',
-  'the', 'de', 'del', 'of', 'van', 'von',
+  'the', 'de', 'del', 'of', 'van', 'von', 'jk',
 ]);
 
 function tokenize(name: string): string[] {
@@ -166,6 +166,14 @@ const DEFAULT_TEAM_ALIASES: Record<string, string[]> = {
 const DEFAULT_TEAM_ALIASES_NORM: Record<string, Set<string>> = {};
 for (const [id, list] of Object.entries(DEFAULT_TEAM_ALIASES)) {
   DEFAULT_TEAM_ALIASES_NORM[id] = new Set(list.map(normalizeKey));
+}
+
+// Wikidata/Transfermarkt kulüp adları farklı yazılabilir ("Paris Saint-Germain FC" gibi).
+// Ek olarak, genel ekler (FC, AC, SK...) atıldıktan sonra kelime kümesi bir takma adla
+// birebir aynıysa da eşleşme sayılır.
+const DEFAULT_TEAM_ALIAS_TOKENS: Record<string, string[][]> = {};
+for (const [id, list] of Object.entries(DEFAULT_TEAM_ALIASES)) {
+  DEFAULT_TEAM_ALIAS_TOKENS[id] = list.map(tokenize).filter((t) => t.length > 0);
 }
 
 // -----------------------------------------------------------------------------
@@ -414,6 +422,14 @@ function playerHasTeam(normClubs: Set<string>, rawClubs: string[], team: TeamRef
   if (aliasSet) {
     for (const c of normClubs) {
       if (aliasSet.has(c)) return true;
+    }
+  }
+
+  const aliasTokenSets = DEFAULT_TEAM_ALIAS_TOKENS[team.id];
+  if (aliasTokenSets) {
+    for (const club of rawClubs) {
+      const ct = tokenize(club);
+      if (ct.length > 0 && aliasTokenSets.some((a) => tokenSetEqual(a, ct))) return true;
     }
   }
 
